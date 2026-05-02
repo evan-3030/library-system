@@ -14,13 +14,13 @@ class User(db.Model):
 
     created_at = db.Column(
         db.DateTime,
-        default=datetime   # auto set on create
+        default=datetime.utcnow   # auto set on create
     )
 
     updated_at = db.Column(
         db.DateTime,
-        default=datetime,
-        onupdate=datetime # auto update on change
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow # auto update on change
     )
 
     # password helpers
