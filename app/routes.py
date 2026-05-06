@@ -3,6 +3,7 @@ from .resources.auth import api as auth_ns
 from .resources.book import api as book_ns
 from .resources.user import api as user_ns
 
+
 authorizations = {
     "Bearer": {   # ✅ FIXED NAME
         "type": "apiKey",

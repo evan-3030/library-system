@@ -10,3 +10,4 @@ class Config:
 
     # ✅ Refresh token expires (long)
     JWT_REFRESH_TOKEN_EXPIRES = 86400  # 1 day
+

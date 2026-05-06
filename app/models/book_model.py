@@ -7,4 +7,4 @@ class Book(db.Model):
     author = db.Column(db.String(120))
     price = db.Column(db.Float)
     is_reserve = db.Column(db.Boolean, default=False)
-
+    reserved_by = db.Column(db.Integer, nullable=True)  

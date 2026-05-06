@@ -1,28 +1,23 @@
 from flask_restx import Namespace, Resource, fields
-from flask_jwt_extended import jwt_required
+from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from ..utils.decorators import admin_required, role_required
 from ..extensions import db
 from ..models.book_model import Book
 
-api = Namespace(
-    "books",
-    description="Book routes for user and admin",
-    security="Bearer"
-)
+api = Namespace("books", description="Book routes", security="Bearer")
 
 # -------------------------------------------------------------
-# 📌 Swagger Model
+# 📌 Swagger Model (NO is_reserve here!)
 # -------------------------------------------------------------
 book_model = api.model("Book", {
     "title": fields.String(required=True),
     "description": fields.String(required=True),
     "price": fields.Float(required=True),
     "author": fields.String(required=True),
-    # "is_reserve": fields.Boolean(default=True, required=False)
 })
 
 # -------------------------------------------------------------
-# 📌 Helper (serialize)
+# 📌 Serialize
 # -------------------------------------------------------------
 def serialize_book(book):
     return {
@@ -32,29 +27,11 @@ def serialize_book(book):
         "price": book.price,
         "author": book.author,
         "is_reserve": book.is_reserve,
+        "reserved_by": book.reserved_by
     }
 
 # -------------------------------------------------------------
-# 📌 1) TEST ROUTES (ROLE BASED)
-# -------------------------------------------------------------
-@api.route('/test-user')
-class TestUser(Resource):
-    @jwt_required()
-    @role_required(["user", "admin"])
-    def get(self):
-        return {"msg": "Hello User or Admin"}, 200
-
-
-@api.route('/test-admin')
-class TestAdmin(Resource):
-    @jwt_required()
-    @role_required(["admin"])
-    def get(self):
-        return {"msg": "Hello Admin only"}, 200
-
-
-# -------------------------------------------------------------
-# 📌 2) USER ROUTES
+# 📌 USER ROUTES
 # -------------------------------------------------------------
 @api.route("/list")
 class UserBookList(Resource):
@@ -64,7 +41,7 @@ class UserBookList(Resource):
         return [serialize_book(b) for b in books], 200
 
 
-@api.route("/<int:id>")
+@api.route("/detail/<int:id>")
 class UserBookDetail(Resource):
     @jwt_required()
     def get(self, id):
@@ -73,24 +50,25 @@ class UserBookDetail(Resource):
 
 
 # -------------------------------------------------------------
-# 📌 3) ADMIN ROUTES
+# 📌 ADMIN ROUTES
 # -------------------------------------------------------------
 @api.route("/")
 class AdminBookCreate(Resource):
+
     @jwt_required()
-    @admin_required
+    @role_required(["admin"])
     @api.expect(book_model, validate=True)
     def post(self):
         data = api.payload or {}
 
         book = Book(
-            title=data.get("title"),
-            description=data.get("description"),
-            price=data.get("price"),
-            author=data.get("author"),
-            is_reserve=data.get("is_reserve",),
+            title=data["title"],
+            description=data["description"],
+            price=data["price"],
+            author=data["author"],
+            is_reserve=False,   # ✅ ALWAYS default
+            reserved_by=None    # ✅ ALWAYS None
         )
-        book.is_reserve = True
 
         db.session.add(book)
         db.session.commit()
@@ -98,7 +76,7 @@ class AdminBookCreate(Resource):
         return {"msg": "Book created", "id": book.id}, 201
 
 
-@api.route("/<int:id>")
+@api.route("/admin/<int:id>")
 class AdminBookActions(Resource):
 
     @jwt_required()
@@ -108,8 +86,7 @@ class AdminBookActions(Resource):
         book = Book.query.get_or_404(id)
         data = api.payload or {}
 
-        # update only allowed fields
-        for field in ["title", "description", "price", "author", "is_reserve"]:
+        for field in ["title", "description", "price", "author"]:
             if field in data:
                 setattr(book, field, data[field])
 
@@ -126,20 +103,76 @@ class AdminBookActions(Resource):
         db.session.commit()
 
         return {"msg": "Book removed"}, 200
-    
 
 
-    @api.route("/book/reserve")
-    class ReserveBook(Resource):
-        @admin_required
-        @api.expect(api.model('ReservBook', {
-            "id": fields.Integer(required=True),
-            "is_reserve": fields.Boolean(required=True, description="True or False")
+# -------------------------------------------------------------
+# 📌 RESERVE BOOK
+# -------------------------------------------------------------
+@api.route('/reserve/<int:id>')
+class BookReserve(Resource):
 
-        }))
-        def put(self):
-            data = api.payload
-            book = Book.query.get_or_404(data['id'])
-            book.is_reserve = data['is_reserve']
+    @jwt_required()
+    @role_required(["user", "admin"])
+    def put(self, id):
+        user_id = int(get_jwt_identity())
+        book = Book.query.get_or_404(id)
+
+        # Already reserved
+        if book.is_reserve is True:
+            return {"msg": "Book not available"}, 400
+
+        try:
+            book.is_reserve = True
+            book.reserved_by = user_id
+
             db.session.commit()
-            return {"msg": f"Book {book.id} reserve status updated to {book.is_reserve}"}, 200
+
+            return {
+                "msg": "Book reserved successfully",
+                "book_id": book.id
+            }, 200
+
+        except Exception as e:
+            db.session.rollback()
+            return {"msg": "Error reserving book", "error": str(e)}, 500
+
+
+# -------------------------------------------------------------
+# 📌 RETURN BOOK
+# -------------------------------------------------------------
+@api.route('/return/<int:id>')
+class BookReturn(Resource):
+
+    @jwt_required()
+    @role_required(["user", "admin"])
+    def put(self, id):
+        user_id = int(get_jwt_identity())
+        role = get_jwt().get("role", "user")
+
+        book = Book.query.get_or_404(id)
+
+        # Not reserved
+        if book.is_reserve is False:
+            return {"msg": "Book is not reserved"}, 400
+
+        if book.reserved_by is None:
+            return {"msg": "Invalid state"}, 500
+
+        # Authorization
+        if role != "admin" and book.reserved_by != user_id:
+            return {"msg": "Not allowed"}, 403
+
+        try:
+            book.is_reserve = False
+            book.reserved_by = None
+
+            db.session.commit()
+
+            return {
+                "msg": "Book returned successfully",
+                "book_id": book.id
+            }, 200
+
+        except Exception as e:
+            db.session.rollback()
+            return {"msg": "Error returning book", "error": str(e)}, 500
