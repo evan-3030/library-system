@@ -1,23 +1,31 @@
 from flask_restx import Namespace, Resource, fields
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
+
 from ..utils.decorators import admin_required, role_required
 from ..extensions import db
+
 from ..models.book_model import Book
+from ..models.fine_model import Fine
+from ..models.user_model import User
+from datetime import datetime, timedelta
+
 
 api = Namespace("books", description="Book routes", security="Bearer")
 
 # -------------------------------------------------------------
-# 📌 Swagger Model (NO is_reserve here!)
+# Swagger Models
 # -------------------------------------------------------------
 book_model = api.model("Book", {
     "title": fields.String(required=True),
     "description": fields.String(required=True),
     "price": fields.Float(required=True),
-    "author": fields.String(required=True),
+    "author": fields.String(required=True)
 })
 
+
+
 # -------------------------------------------------------------
-# 📌 Serialize
+# Serialize
 # -------------------------------------------------------------
 def serialize_book(book):
     return {
@@ -31,18 +39,20 @@ def serialize_book(book):
     }
 
 # -------------------------------------------------------------
-# 📌 USER ROUTES
+# USER ROUTES
 # -------------------------------------------------------------
 @api.route("/list")
 class UserBookList(Resource):
+
     @jwt_required()
     def get(self):
         books = Book.query.all()
-        return [serialize_book(b) for b in books], 200
+        return [serialize_book(book) for book in books], 200
 
 
 @api.route("/detail/<int:id>")
 class UserBookDetail(Resource):
+
     @jwt_required()
     def get(self, id):
         book = Book.query.get_or_404(id)
@@ -50,7 +60,7 @@ class UserBookDetail(Resource):
 
 
 # -------------------------------------------------------------
-# 📌 ADMIN ROUTES
+# ADMIN ROUTES
 # -------------------------------------------------------------
 @api.route("/")
 class AdminBookCreate(Resource):
@@ -59,6 +69,7 @@ class AdminBookCreate(Resource):
     @role_required(["admin"])
     @api.expect(book_model, validate=True)
     def post(self):
+
         data = api.payload or {}
 
         book = Book(
@@ -66,14 +77,18 @@ class AdminBookCreate(Resource):
             description=data["description"],
             price=data["price"],
             author=data["author"],
-            is_reserve=False,   # ✅ ALWAYS default
-            reserved_by=None    # ✅ ALWAYS None
+            is_reserve=False,
+            reserved_by=None
         )
 
-        db.session.add(book)
-        db.session.commit()
+        try:
+            db.session.add(book)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return {"msg": "DB error", "error": str(e)}, 500
 
-        return {"msg": "Book created", "id": book.id}, 201
+        return {"msg": "Book created", "book_id": book.id}, 201
 
 
 @api.route("/admin/<int:id>")
@@ -83,6 +98,7 @@ class AdminBookActions(Resource):
     @admin_required
     @api.expect(book_model, validate=True)
     def put(self, id):
+
         book = Book.query.get_or_404(id)
         data = api.payload or {}
 
@@ -92,11 +108,12 @@ class AdminBookActions(Resource):
 
         db.session.commit()
 
-        return {"msg": "Book updated", "id": book.id}, 200
+        return {"msg": "Book updated", "book_id": book.id}, 200
 
     @jwt_required()
     @admin_required
     def delete(self, id):
+
         book = Book.query.get_or_404(id)
 
         db.session.delete(book)
@@ -106,7 +123,7 @@ class AdminBookActions(Resource):
 
 
 # -------------------------------------------------------------
-# 📌 RESERVE BOOK
+# RESERVE BOOK
 # -------------------------------------------------------------
 @api.route('/reserve/<int:id>')
 class BookReserve(Resource):
@@ -114,22 +131,28 @@ class BookReserve(Resource):
     @jwt_required()
     @role_required(["user", "admin"])
     def put(self, id):
+
         user_id = int(get_jwt_identity())
         book = Book.query.get_or_404(id)
 
-        # Already reserved
-        if book.is_reserve is True:
+        if book.is_reserve:
             return {"msg": "Book not available"}, 400
 
         try:
+            now = datetime.utcnow()
+
             book.is_reserve = True
             book.reserved_by = user_id
+            book.borrowed_at = now
+            book.due_date = now + timedelta(days=7)
+            book.returned_at = None
 
             db.session.commit()
 
             return {
                 "msg": "Book reserved successfully",
-                "book_id": book.id
+                "book_id": book.id,
+                "due_date": book.due_date.isoformat()
             }, 200
 
         except Exception as e:
@@ -138,7 +161,7 @@ class BookReserve(Resource):
 
 
 # -------------------------------------------------------------
-# 📌 RETURN BOOK
+# RETURN BOOK (FIXED 🔥)
 # -------------------------------------------------------------
 @api.route('/return/<int:id>')
 class BookReturn(Resource):
@@ -146,33 +169,56 @@ class BookReturn(Resource):
     @jwt_required()
     @role_required(["user", "admin"])
     def put(self, id):
+
         user_id = int(get_jwt_identity())
         role = get_jwt().get("role", "user")
 
         book = Book.query.get_or_404(id)
 
-        # Not reserved
-        if book.is_reserve is False:
+        if not book.is_reserve:
             return {"msg": "Book is not reserved"}, 400
 
-        if book.reserved_by is None:
-            return {"msg": "Invalid state"}, 500
-
-        # Authorization
         if role != "admin" and book.reserved_by != user_id:
             return {"msg": "Not allowed"}, 403
 
         try:
+            now = datetime.utcnow()
+            borrower_id = book.reserved_by
+
+            # ✅ handle fine (NO DUPLICATES)
+            if book.due_date and now > book.due_date:
+
+                days_late = max((now - book.due_date).days, 0)
+
+                if days_late > 0:
+
+                    existing_fine = Fine.query.filter_by(user_id=borrower_id).first()
+
+                    if existing_fine:
+                        existing_fine.amount += days_late * 2
+                        existing_fine.days_late += days_late
+                    else:
+                        fine = Fine(
+                            user_id=borrower_id,
+                            book_id=book.id,
+                            amount=days_late * 2,
+                            days_late=days_late
+                        )
+                        db.session.add(fine)
+
+            # reset book
             book.is_reserve = False
             book.reserved_by = None
+            book.borrowed_at = None
+            book.due_date = None
+            book.returned_at = now
 
             db.session.commit()
 
-            return {
-                "msg": "Book returned successfully",
-                "book_id": book.id
-            }, 200
+            return {"msg": "Book returned successfully"}, 200
 
         except Exception as e:
             db.session.rollback()
             return {"msg": "Error returning book", "error": str(e)}, 500
+
+

@@ -1,18 +1,16 @@
 from flask import Flask
 from .extensions import db, jwt
-from .config import Config
 from .routes import api
 
 def create_app():
     app = Flask(__name__)
-    app.config.from_object(Config)
+
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///app.db'
+    app.config['JWT_SECRET_KEY'] = 'super-secret-key-1234567890123456'
 
     db.init_app(app)
-    jwt.init_app(app)
+    jwt.init_app(app)   # ✅ VERY IMPORTANT
 
     api.init_app(app)
-
-    with app.app_context():
-        db.create_all()
 
     return app

@@ -6,7 +6,7 @@ from flask_jwt_extended import (
     get_jwt_identity
 )
 from ..extensions import db
-from ..models.user import User   # ✅ fixed import path
+from ..models.user_model import User   # ✅ fixed import path
 
 api = Namespace('auth', description="Authentication routes")
 

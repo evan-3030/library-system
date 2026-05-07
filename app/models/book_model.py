@@ -7,4 +7,7 @@ class Book(db.Model):
     author = db.Column(db.String(120))
     price = db.Column(db.Float)
     is_reserve = db.Column(db.Boolean, default=False)
-    reserved_by = db.Column(db.Integer, nullable=True)  
+    borrowed_at = db.Column(db.DateTime, nullable=True)
+    due_date = db.Column(db.DateTime, nullable=True)
+    returned_at = db.Column(db.DateTime, nullable=True)
+    reserved_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
