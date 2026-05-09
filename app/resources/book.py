@@ -6,7 +6,6 @@ from ..extensions import db
 
 from ..models.book_model import Book
 from ..models.fine_model import Fine
-from ..models.user_model import User
 from datetime import datetime, timedelta
 
 
@@ -23,7 +22,6 @@ book_model = api.model("Book", {
 })
 
 
-
 # -------------------------------------------------------------
 # Serialize
 # -------------------------------------------------------------
@@ -34,9 +32,10 @@ def serialize_book(book):
         "description": book.description,
         "price": book.price,
         "author": book.author,
-        "is_reserve": book.is_reserve,
-        "reserved_by": book.reserved_by
+        "is_reserved": book.is_reserved,
+        "user_id": book.user_id   # ✅ FIXED
     }
+
 
 # -------------------------------------------------------------
 # USER ROUTES
@@ -77,8 +76,8 @@ class AdminBookCreate(Resource):
             description=data["description"],
             price=data["price"],
             author=data["author"],
-            is_reserve=False,
-            reserved_by=None
+            is_reserved=False,
+            user_id=None   # ✅ FIXED
         )
 
         try:
@@ -135,14 +134,14 @@ class BookReserve(Resource):
         user_id = int(get_jwt_identity())
         book = Book.query.get_or_404(id)
 
-        if book.is_reserve:
+        if book.is_reserved:
             return {"msg": "Book not available"}, 400
 
         try:
             now = datetime.utcnow()
 
-            book.is_reserve = True
-            book.reserved_by = user_id
+            book.is_reserved = True
+            book.user_id = user_id   # ✅ FIXED
             book.borrowed_at = now
             book.due_date = now + timedelta(days=7)
             book.returned_at = None
@@ -161,7 +160,7 @@ class BookReserve(Resource):
 
 
 # -------------------------------------------------------------
-# RETURN BOOK (FIXED 🔥)
+# RETURN BOOK
 # -------------------------------------------------------------
 @api.route('/return/<int:id>')
 class BookReturn(Resource):
@@ -175,24 +174,27 @@ class BookReturn(Resource):
 
         book = Book.query.get_or_404(id)
 
-        if not book.is_reserve:
+        if not book.is_reserved:
             return {"msg": "Book is not reserved"}, 400
 
-        if role != "admin" and book.reserved_by != user_id:
+        if role != "admin" and book.user_id != user_id:   # ✅ FIXED
             return {"msg": "Not allowed"}, 403
 
         try:
             now = datetime.utcnow()
-            borrower_id = book.reserved_by
+            borrower_id = book.user_id   # ✅ FIXED
 
-            # ✅ handle fine (NO DUPLICATES)
+            # ✅ Fine calculation (PER USER + BOOK)
             if book.due_date and now > book.due_date:
 
                 days_late = max((now - book.due_date).days, 0)
 
                 if days_late > 0:
 
-                    existing_fine = Fine.query.filter_by(user_id=borrower_id).first()
+                    existing_fine = Fine.query.filter_by(
+                        user_id=borrower_id,
+                        book_id=book.id
+                    ).first()
 
                     if existing_fine:
                         existing_fine.amount += days_late * 2
@@ -207,8 +209,8 @@ class BookReturn(Resource):
                         db.session.add(fine)
 
             # reset book
-            book.is_reserve = False
-            book.reserved_by = None
+            book.is_reserved = False
+            book.user_id = None   # ✅ FIXED
             book.borrowed_at = None
             book.due_date = None
             book.returned_at = now
@@ -220,5 +222,3 @@ class BookReturn(Resource):
         except Exception as e:
             db.session.rollback()
             return {"msg": "Error returning book", "error": str(e)}, 500
-
-
