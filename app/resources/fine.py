@@ -39,7 +39,7 @@ fine_update_model = api.model("FineUpdate", {
 # -------------------------------------------------------------
 # ADMIN: ALL FINES
 # -------------------------------------------------------------
-@api.route('/all-fines')
+@api.route("/all")
 class AllFines(Resource):
 
     @jwt_required()
@@ -48,16 +48,52 @@ class AllFines(Resource):
 
         fines = Fine.query.all()
 
-        return [
-            {
-                "fine_id": f.id,
-                "user_id": f.user_id,
-                "book_id": f.book_id,
-                "amount": f.amount,
-                "days_late": f.days_late,
-                "is_paid": f.is_paid
-            } for f in fines
-        ], 200
+        result = []
+        total = 0
+
+        for fine in fines:
+            total += fine.amount
+
+            result.append({
+                "user_id": fine.user_id,
+                "book_id": fine.book_id,
+                "amount": fine.amount,
+                "days_late": fine.days_late,
+                "is_paid": fine.is_paid
+            })
+
+        return {
+            "total_fines": total,
+            "count": len(result),
+            "fines": result
+        }, 200
+    
+
+
+
+# -------------------------------------------------------------
+# USER: TOTAL FINES
+# -------------------------------------------------------------
+
+
+
+@api.route("/my-total")
+class MyTotalFine(Resource):
+
+    @jwt_required()
+    def get(self):
+
+        user_id = int(get_jwt_identity())
+
+        fines = Fine.query.filter_by(user_id=user_id).all()
+
+        total = sum(f.amount for f in fines)
+
+        return {
+            "user_id": user_id,
+            "total_fine": total,
+            "books_count": len(fines)
+        }, 200
 
 
 # -------------------------------------------------------------
@@ -216,22 +252,3 @@ class AddMultipleFines(Resource):
                 "error": str(e)
             }, 500
 
-
-# -------------------------------------------------------------
-# TOTAL FINES
-# -------------------------------------------------------------
-@api.route('/total/<int:user_id>')
-class TotalFine(Resource):
-
-    @jwt_required()
-    @role_required(["admin", "user"])
-    def get(self, user_id):
-
-        fines = Fine.query.filter_by(user_id=user_id).all()
-        total = sum(f.amount for f in fines)
-
-        return {
-            "user_id": user_id,
-            "total_fine": total,
-            "count_books": len(fines)
-        }, 200

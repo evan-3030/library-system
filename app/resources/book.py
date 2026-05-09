@@ -6,10 +6,13 @@ from ..extensions import db
 
 from ..models.book_model import Book
 from ..models.fine_model import Fine
+from ..models.fine_setting_model import FineSetting
+
 from datetime import datetime, timedelta
 
 
 api = Namespace("books", description="Book routes", security="Bearer")
+
 
 # -------------------------------------------------------------
 # Swagger Models
@@ -33,7 +36,7 @@ def serialize_book(book):
         "price": book.price,
         "author": book.author,
         "is_reserved": book.is_reserved,
-        "user_id": book.user_id   # ✅ FIXED
+        "user_id": book.user_id
     }
 
 
@@ -77,7 +80,7 @@ class AdminBookCreate(Resource):
             price=data["price"],
             author=data["author"],
             is_reserved=False,
-            user_id=None   # ✅ FIXED
+            user_id=None
         )
 
         try:
@@ -141,9 +144,9 @@ class BookReserve(Resource):
             now = datetime.utcnow()
 
             book.is_reserved = True
-            book.user_id = user_id   # ✅ FIXED
+            book.user_id = user_id
             book.borrowed_at = now
-            book.due_date = now + timedelta(days=7)
+            book.due_date = now - timedelta(days=7)
             book.returned_at = None
 
             db.session.commit()
@@ -177,19 +180,24 @@ class BookReturn(Resource):
         if not book.is_reserved:
             return {"msg": "Book is not reserved"}, 400
 
-        if role != "admin" and book.user_id != user_id:   # ✅ FIXED
+        if role != "admin" and book.user_id != user_id:
             return {"msg": "Not allowed"}, 403
 
         try:
             now = datetime.utcnow()
-            borrower_id = book.user_id   # ✅ FIXED
+            borrower_id = book.user_id
 
-            # ✅ Fine calculation (PER USER + BOOK)
+            # ✅ Fine calculation
             if book.due_date and now > book.due_date:
 
                 days_late = max((now - book.due_date).days, 0)
 
                 if days_late > 0:
+
+                    setting = FineSetting.query.first()
+                    fine_per_day = setting.fine_per_day if setting else 2
+
+                    amount = days_late * fine_per_day
 
                     existing_fine = Fine.query.filter_by(
                         user_id=borrower_id,
@@ -197,20 +205,20 @@ class BookReturn(Resource):
                     ).first()
 
                     if existing_fine:
-                        existing_fine.amount += days_late * 2
+                        existing_fine.amount += amount
                         existing_fine.days_late += days_late
                     else:
                         fine = Fine(
                             user_id=borrower_id,
                             book_id=book.id,
-                            amount=days_late * 2,
+                            amount=amount,
                             days_late=days_late
                         )
                         db.session.add(fine)
 
-            # reset book
+            # ✅ Reset book
             book.is_reserved = False
-            book.user_id = None   # ✅ FIXED
+            book.user_id = None
             book.borrowed_at = None
             book.due_date = None
             book.returned_at = now
