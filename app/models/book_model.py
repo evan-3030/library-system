@@ -27,3 +27,4 @@ class Book(db.Model):
     # Timestamps (useful, not extra 🚀)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, onupdate=datetime.utcnow)
+
