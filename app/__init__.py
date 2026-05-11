@@ -2,6 +2,7 @@ from flask import Flask
 from .extensions import db, jwt
 from flask_restx import Api
 
+
 def create_app():
     app = Flask(__name__)
 
@@ -24,18 +25,25 @@ def create_app():
         }
     }
 
-    # ✅ CREATE API (ONLY ONCE)
-    api = Api(
-        app,
-        authorizations=authorizations,
-        security="Bearer"
-    )
-
     # -----------------------------
     # INIT EXTENSIONS
     # -----------------------------
     db.init_app(app)
     jwt.init_app(app)
+
+    # -----------------------------
+    # CREATE API (ONLY HERE ✅)
+    # -----------------------------
+    api = Api(
+        app,
+        title="Library API",
+        version="1.0",
+        description="Library Management System",
+        doc="/swagger",              # ✅ Swagger path
+        authorizations=authorizations,
+        security="Bearer"
+    )
+
 
     # -----------------------------
     # REGISTER NAMESPACES
@@ -44,9 +52,9 @@ def create_app():
     from app.resources.book import api as book_ns
     from app.resources.fine import api as fine_ns
 
-    api.add_namespace(auth_ns)
-    api.add_namespace(book_ns)
-    api.add_namespace(fine_ns)
+    api.add_namespace(auth_ns, path="/auth")
+    api.add_namespace(book_ns, path="/books")
+    api.add_namespace(fine_ns, path="/fine")
 
     # -----------------------------
     # CREATE TABLES

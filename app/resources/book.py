@@ -6,12 +6,17 @@ from ..extensions import db
 
 from ..models.book_model import Book
 from ..models.fine_model import Fine
-from ..models.fine_setting_model import FineSetting
 
 from datetime import datetime, timedelta
 
-
 api = Namespace("books", description="Book routes", security="Bearer")
+
+# -------------------------------------------------------------
+# CONSTANT
+# -------------------------------------------------------------
+
+
+FINE_PER_DAY = 20
 
 
 # -------------------------------------------------------------
@@ -83,12 +88,8 @@ class AdminBookCreate(Resource):
             user_id=None
         )
 
-        try:
-            db.session.add(book)
-            db.session.commit()
-        except Exception as e:
-            db.session.rollback()
-            return {"msg": "DB error", "error": str(e)}, 500
+        db.session.add(book)
+        db.session.commit()
 
         return {"msg": "Book created", "book_id": book.id}, 201
 
@@ -140,26 +141,25 @@ class BookReserve(Resource):
         if book.is_reserved:
             return {"msg": "Book not available"}, 400
 
-        try:
-            now = datetime.utcnow()
+        now = datetime.utcnow()
 
-            book.is_reserved = True
-            book.user_id = user_id
-            book.borrowed_at = now
-            book.due_date = now - timedelta(days=7)
-            book.returned_at = None
+        book.is_reserved = True
+        book.user_id = user_id
+        book.borrowed_at = now
 
-            db.session.commit()
+        # 🔥 TEST MODE (seconds-based fine)
+        book.due_date = now + timedelta(seconds=10)
+        # book.due_date = now + timedelta(days=7)
 
-            return {
-                "msg": "Book reserved successfully",
-                "book_id": book.id,
-                "due_date": book.due_date.isoformat()
-            }, 200
+        book.returned_at = None
 
-        except Exception as e:
-            db.session.rollback()
-            return {"msg": "Error reserving book", "error": str(e)}, 500
+        db.session.commit()
+
+        return {
+            "msg": "Book reserved successfully",
+            "book_id": book.id,
+            "due_date": book.due_date.isoformat()
+        }, 200
 
 
 # -------------------------------------------------------------
@@ -187,17 +187,23 @@ class BookReturn(Resource):
             now = datetime.utcnow()
             borrower_id = book.user_id
 
-            # ✅ Fine calculation
+            # -------------------------------------------------
+            # CALCULATE FINE
+            # -------------------------------------------------
             if book.due_date and now > book.due_date:
 
-                days_late = max((now - book.due_date).days, 0)
+                        # test mode seconds
+                seconds_late = max((now - book.due_date).total_seconds(), 0)
+                # amount = int(seconds_late)
+                days_late = int(seconds_late)
+                amount = days_late * FINE_PER_DAY
+
+
+                # days_late = max((now - book.due_date).days, 0)
+                
 
                 if days_late > 0:
-
-                    setting = FineSetting.query.first()
-                    fine_per_day = setting.fine_per_day if setting else 2
-
-                    amount = days_late * fine_per_day
+                    # amount = days_late * FINE_PER_DAY
 
                     existing_fine = Fine.query.filter_by(
                         user_id=borrower_id,
@@ -216,7 +222,9 @@ class BookReturn(Resource):
                         )
                         db.session.add(fine)
 
-            # ✅ Reset book
+            # -------------------------------------------------
+            # RESET BOOK
+            # -------------------------------------------------
             book.is_reserved = False
             book.user_id = None
             book.borrowed_at = None
